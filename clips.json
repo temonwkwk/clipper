@@ -1,0 +1,8 @@
+[
+ {"title": "brain-vs-computer-hook", "start": "0:00", "end": "0:38",
+  "caption": "Otak kamu kenal angka 3 dalam sekejap. Komputer? Butuh 784 neuron dulu."},
+ {"title": "what-is-a-neuron", "start": "2:33", "end": "3:12",
+  "caption": "Apa itu neuron? Cuma sebuah angka antara 0 dan 1. Sesederhana itu."},
+ {"title": "784-input-neurons", "start": "3:05", "end": "3:45",
+  "caption": "28x28 piksel = 784 neuron input. Ini lapisan pertama sebuah neural network."}
+]

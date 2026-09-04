@@ -1,0 +1,28 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Working data: downloaded videos, captions, rendered clips.
+# These are large (tens of MB per job) and reproducible from a URL.
+work/
+*.mp4
+*.mkv
+*.webm
+*.m4a
+*.json3
+*.vtt
+*.srt
+*.ass
+*.png
+*.jpg
+
+# Secrets never belong here. clipper needs none, but keep the guard.
+.env
+*.env
+!.env.example
+
+# OS / editor
+.DS_Store
+*.swp
