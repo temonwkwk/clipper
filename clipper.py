@@ -36,8 +36,9 @@ import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
-HOME = Path(os.path.expanduser("~"))
-DEFAULT_WORKDIR = HOME / "clipper" / "work"
+# Work lands beside the script, so a clone in any directory keeps its own jobs.
+# (Hardcoding ~/clipper/work made every clone write into one shared tree.)
+DEFAULT_WORKDIR = Path(__file__).resolve().parent / "work"
 
 
 # ----------------------------------------------------------------------------
