@@ -4,6 +4,10 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
+# Virtualenvs are arch-specific and rebuildable from the README.
+.venv/
+venv/
+
 # Working data: downloaded videos, captions, rendered clips.
 # These are large (tens of MB per job) and reproducible from a URL.
 work/

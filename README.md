@@ -32,6 +32,10 @@ python clipper.py transcript work/<job-dir> --window 60
 
 # 3. cut
 python clipper.py cut work/<job-dir> clips.json
+
+# 4. publish (optional — dry run by default, see below)
+python clipper.py publish work/<job-dir> --clips clips.json \
+  --user <profile> --platform tiktok --platform youtube
 ```
 
 `clips.json` — times accept seconds, `M:SS`, or `H:MM:SS`:
@@ -43,12 +47,56 @@ python clipper.py cut work/<job-dir> clips.json
 ]
 ```
 
-An optional `"caption"` field per clip is carried through for publishers that
-read it. The `clips.json` in this repo is a working example cut against
+An optional `"caption"` field per clip is carried through, and `publish` uses it
+as the post text. The `clips.json` in this repo is a working example cut against
 3Blue1Brown's "But what is a neural network?" — replace the windows with your
 own.
 
 Clips land in `work/<job-dir>/clips/NN-title.mp4`.
+
+## Publishing
+
+`publish` pushes rendered clips to social platforms through
+[Upload-Post](https://app.upload-post.com) — one request per clip, fanned out to
+every `--platform` you list. Connect the social accounts in their dashboard
+first; the API key alone is not enough.
+
+The key is read from `UPLOAD_POST_API_KEY` in the environment, or from a `.env`
+beside the script. It is never accepted as a CLI argument, because `argv` is
+world-readable.
+
+```bash
+cp .env.example .env    # then paste your key in
+python clipper.py publish work/<job-dir> --clips clips.json \
+  --user mybrand --platform tiktok        # dry run: prints, sends nothing
+python clipper.py publish work/<job-dir> --clips clips.json \
+  --user mybrand --platform tiktok --yes  # actually publishes
+```
+
+**Quota discipline.** Upload-Post's free plan allows 10 uploads/month, and a
+publish is irreversible, so the defaults are deliberately timid:
+
+| Flag | Effect |
+|---|---|
+| *(none)* | **Dry run.** Prints the plan, spends nothing. `--yes` is the only way to send |
+| `--max-uploads N` | Hard cap on uploads spent in one run |
+| `--only 02` | Publish just these clips (filename, stem, or index) |
+| `--force` | Resend even if `publish.json` says it already landed |
+| `--schedule` / `--timezone` | ISO-8601 publish time, e.g. `--timezone Asia/Jakarta` |
+| `--sync` / `--no-wait` | Synchronous upload / skip status polling |
+
+Every send is recorded in `work/<job-dir>/publish.json`, per clip **and per
+platform**. Re-running skips what already landed, so an interrupted batch
+resumes instead of double-posting — and a clip that reached TikTok but failed on
+YouTube retries only YouTube. Each request also carries a stable
+`Idempotency-Key`, so a retry after a network timeout resumes the existing job
+rather than burning a second upload.
+
+Platform reality check: YouTube and TikTok both gate API publishing behind an app
+audit. Upload-Post has passed those audits — that, not the HTTP call, is what
+you are paying for. Facebook Pages, Threads, Bluesky, Telegram and Discord have
+no such gate and can be self-hosted against their own APIs if you'd rather not
+spend quota on them.
 
 ## Options
 

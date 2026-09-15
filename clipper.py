@@ -843,6 +843,114 @@ def cmd_cut(args: argparse.Namespace) -> int:
 
 
 # ----------------------------------------------------------------------------
+# publish
+# ----------------------------------------------------------------------------
+def cmd_publish(args: argparse.Namespace) -> int:
+    """Push rendered clips to social platforms via the Upload-Post API.
+
+    Dry-run is the default: publishing is irreversible, public, and metered
+    (the free plan allows 10 uploads/month). --yes is the only way to spend it.
+    """
+    import uploadpost as up
+
+    job_dir = Path(args.job_dir).expanduser()
+    if not job_dir.is_dir():
+        raise SystemExit(f"no such job dir: {job_dir}")
+
+    clips_spec: list[dict] = []
+    spec_path = Path(args.clips).expanduser() if args.clips else None
+    if spec_path and spec_path.is_file():
+        loaded = json.loads(spec_path.read_text(encoding="utf-8"))
+        clips_spec = loaded.get("clips", []) if isinstance(loaded, dict) else loaded
+
+    ledger_path = job_dir / "publish.json"
+    ledger = up.load_ledger(ledger_path)
+
+    plans = up.plan_uploads(
+        job_dir, args.platform,
+        clips_spec=clips_spec,
+        ledger=ledger,
+        force=args.force,
+        only=args.only,
+    )
+
+    live = [p for p in plans if p.platforms]
+    if args.max_uploads is not None:
+        live = live[:args.max_uploads]
+
+    print(f"job      : {job_dir}")
+    print(f"profile  : {args.user}")
+    print(f"platforms: {', '.join(args.platform)}")
+    if args.schedule:
+        print(f"schedule : {args.schedule} ({args.timezone or 'UTC'})")
+    print(f"uploads  : {len(live)} of {len(plans)} clip(s)\n")
+
+    for plan in plans:
+        if not plan.platforms:
+            print(f"[{plan.index}] {plan.name}  — already published to "
+                  f"{', '.join(plan.skipped)}; skipping (use --force to resend)")
+            continue
+        if plan not in live:
+            print(f"[{plan.index}] {plan.name}  — held back by --max-uploads")
+            continue
+        size_mb = plan.path.stat().st_size / 1e6
+        print(f"[{plan.index}] {plan.name}  {size_mb:.1f} MB -> "
+              f"{', '.join(plan.platforms)}")
+        print(f"     title: {plan.title}")
+        if plan.skipped:
+            print(f"     (skipping {', '.join(plan.skipped)} — already done)")
+
+    if not live:
+        print("\nnothing to upload.")
+        return 0
+
+    if not args.yes:
+        print(f"\nDRY RUN — nothing was sent. {len(live)} upload(s) would be "
+              f"spent.\nRe-run with --yes to publish.")
+        return 0
+
+    api_key = up.load_api_key(Path(__file__).resolve().parent / ".env")
+    print(f"\napi key  : {up.redact(api_key)}")
+    print(f"sending {len(live)} upload(s)...\n")
+
+    failures = 0
+    for plan in live:
+        fields = up.build_fields(
+            plan, args.user,
+            scheduled_date=args.schedule,
+            timezone=args.timezone,
+            async_upload=not args.sync,
+        )
+        try:
+            response = up.send_upload(plan, api_key, fields)
+        except RuntimeError as exc:
+            failures += 1
+            print(f"[{plan.index}] {plan.name}  FAILED: {exc}", file=sys.stderr)
+            continue
+
+        request_id = response.get("request_id") or plan.idempotency_key
+        print(f"[{plan.index}] {plan.name}  accepted  request_id={request_id}")
+
+        if not args.no_wait and not args.schedule:
+            status = up.poll_status(request_id, api_key)
+            response = {**response, **status}
+            state = status.get("status", "unknown")
+            print(f"     status: {state}")
+            for platform, url in up.post_urls(status).items():
+                print(f"     {platform}: {url}")
+            if state == "failed":
+                failures += 1
+
+        ledger = up.record(ledger, plan, response)
+        ledger_path.write_text(json.dumps(ledger, indent=2), encoding="utf-8")
+
+    print(f"\nledger: {ledger_path}")
+    if failures:
+        print(f"{failures} upload(s) did not succeed.", file=sys.stderr)
+    return 1 if failures else 0
+
+
+# ----------------------------------------------------------------------------
 # cli
 # ----------------------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
@@ -885,6 +993,35 @@ def build_parser() -> argparse.ArgumentParser:
     p_cut.add_argument("--keep-subs", action="store_true",
                        help="keep the generated .ass caption files for inspection")
     p_cut.set_defaults(func=cmd_cut)
+
+    p_pub = sub.add_parser("publish",
+                           help="upload rendered clips via Upload-Post")
+    p_pub.add_argument("job_dir")
+    p_pub.add_argument("--clips", default=None,
+                       help="clips.json used for the cut, for titles/captions")
+    p_pub.add_argument("--user", required=True,
+                       help="Upload-Post profile name (see app.upload-post.com)")
+    p_pub.add_argument("--platform", action="append", default=[],
+                       help="target platform; repeat for several")
+    p_pub.add_argument("--only", action="append", default=None,
+                       help="publish just these clips (filename, stem, or index)")
+    # Publishing is irreversible and metered. Dry-run is the default, and --yes
+    # is the only thing that spends quota.
+    p_pub.add_argument("--yes", action="store_true",
+                       help="actually send (default is a dry run)")
+    p_pub.add_argument("--max-uploads", type=int, default=None,
+                       help="cap uploads spent in this run")
+    p_pub.add_argument("--force", action="store_true",
+                       help="resend even if publish.json says it already landed")
+    p_pub.add_argument("--schedule", default=None,
+                       help="ISO-8601 publish time, e.g. 2026-09-20T18:00:00")
+    p_pub.add_argument("--timezone", default=None,
+                       help="IANA zone for --schedule, e.g. Asia/Jakarta")
+    p_pub.add_argument("--sync", action="store_true",
+                       help="synchronous upload (default is async + polling)")
+    p_pub.add_argument("--no-wait", action="store_true",
+                       help="do not poll for status after sending")
+    p_pub.set_defaults(func=cmd_publish)
 
     return parser
 
