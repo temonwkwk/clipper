@@ -27,6 +27,7 @@ Times accept seconds (int/float) or "M:SS" / "H:MM:SS".
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import os
 import re
@@ -963,10 +964,18 @@ def cmd_publish(args: argparse.Namespace) -> int:
     print(f"sending {len(live)} upload(s)...\n")
 
     failures = 0
-    for plan in live:
+    for index, plan in enumerate(live):
+        scheduled_date = args.schedule
+        if scheduled_date and args.gap_minutes:
+            try:
+                base = dt.datetime.fromisoformat(scheduled_date.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise SystemExit(f"invalid --schedule ISO-8601 value: {scheduled_date}") from exc
+            base += dt.timedelta(minutes=args.gap_minutes * index)
+            scheduled_date = base.isoformat(timespec="seconds")
         fields = up.build_fields(
             plan, user,
-            scheduled_date=args.schedule,
+            scheduled_date=scheduled_date,
             timezone=args.timezone,
             async_upload=not args.sync,
         )
@@ -1073,6 +1082,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="ISO-8601 publish time, e.g. 2026-09-20T18:00:00")
     p_pub.add_argument("--timezone", default=None,
                        help="IANA zone for --schedule, e.g. Asia/Jakarta")
+    p_pub.add_argument("--gap-minutes", type=int, default=0,
+                       help="add this many minutes between scheduled clips")
     p_pub.add_argument("--sync", action="store_true",
                        help="synchronous upload (default is async + polling)")
     p_pub.add_argument("--no-wait", action="store_true",
