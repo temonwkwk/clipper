@@ -73,6 +73,15 @@ python clipper.py publish work/<job-dir> --clips clips.json \
   --user mybrand --platform tiktok --yes  # actually publishes
 ```
 
+`--user` is optional if `UPLOAD_POST_USER` is set in `.env`. To verify the key
+and see the exact profile usernames plus connected platforms (read-only, no
+upload quota):
+
+```bash
+python clipper.py publish --check
+```
+
+
 **Quota discipline.** Upload-Post's free plan allows 10 uploads/month, and a
 publish is irreversible, so the defaults are deliberately timid:
 

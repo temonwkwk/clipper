@@ -853,6 +853,42 @@ def cmd_publish(args: argparse.Namespace) -> int:
     """
     import uploadpost as up
 
+    env_path = Path(__file__).resolve().parent / ".env"
+
+    # --check verifies credentials and lists the connected accounts. It hits a
+    # read-only endpoint, so it costs no upload quota — always the first call
+    # to make against a new key.
+    if args.check:
+        api_key = up.load_api_key(env_path)
+        print(f"api key  : {up.redact(api_key)}")
+        data = up.check_profiles(api_key)
+        profiles = data.get("profiles", [])
+        if not profiles:
+            print("no profiles — create one at https://app.upload-post.com")
+            return 1
+        print(f"plan     : {data.get('plan', '?')}  "
+              f"(profile limit {data.get('limit', '?')})\n")
+        for profile in profiles:
+            name = profile.get("username", "?")
+            print(f"profile: {name}")
+            accounts = profile.get("social_accounts") or {}
+            connected = {k: v for k, v in accounts.items() if v}
+            if not connected:
+                print("  (no social accounts connected — uploads would be skipped)")
+            for platform, info in connected.items():
+                label = info.get("handle") or info.get("display_name") \
+                    if isinstance(info, dict) else str(info)
+                flag = " [REAUTH REQUIRED]" if isinstance(info, dict) \
+                    and info.get("reauth_required") else ""
+                print(f"  {platform:<16} {label or '(connected)'}{flag}")
+            print(f"\n  use it with: --user {name}   "
+                  f"(or UPLOAD_POST_USER={name} in .env)\n")
+        return 0
+
+    if not args.job_dir:
+        raise SystemExit("job_dir is required (omit it only with --check)")
+    user = args.user or up.load_user(env_path)
+
     job_dir = Path(args.job_dir).expanduser()
     if not job_dir.is_dir():
         raise SystemExit(f"no such job dir: {job_dir}")
@@ -879,7 +915,7 @@ def cmd_publish(args: argparse.Namespace) -> int:
         live = live[:args.max_uploads]
 
     print(f"job      : {job_dir}")
-    print(f"profile  : {args.user}")
+    print(f"profile  : {user}")
     print(f"platforms: {', '.join(args.platform)}")
     if args.schedule:
         print(f"schedule : {args.schedule} ({args.timezone or 'UTC'})")
@@ -909,14 +945,14 @@ def cmd_publish(args: argparse.Namespace) -> int:
               f"spent.\nRe-run with --yes to publish.")
         return 0
 
-    api_key = up.load_api_key(Path(__file__).resolve().parent / ".env")
+    api_key = up.load_api_key(env_path)
     print(f"\napi key  : {up.redact(api_key)}")
     print(f"sending {len(live)} upload(s)...\n")
 
     failures = 0
     for plan in live:
         fields = up.build_fields(
-            plan, args.user,
+            plan, user,
             scheduled_date=args.schedule,
             timezone=args.timezone,
             async_upload=not args.sync,
@@ -996,11 +1032,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_pub = sub.add_parser("publish",
                            help="upload rendered clips via Upload-Post")
-    p_pub.add_argument("job_dir")
+    p_pub.add_argument("job_dir", nargs="?", default=None,
+                       help="job directory (omit only with --check)")
+    p_pub.add_argument("--check", action="store_true",
+                       help="verify the API key and list connected accounts; "
+                            "costs no upload quota")
     p_pub.add_argument("--clips", default=None,
                        help="clips.json used for the cut, for titles/captions")
-    p_pub.add_argument("--user", required=True,
-                       help="Upload-Post profile name (see app.upload-post.com)")
+    p_pub.add_argument("--user", default=None,
+                       help="Upload-Post profile name "
+                            "(default: UPLOAD_POST_USER from env or .env)")
     p_pub.add_argument("--platform", action="append", default=[],
                        help="target platform; repeat for several")
     p_pub.add_argument("--only", action="append", default=None,

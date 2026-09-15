@@ -81,25 +81,52 @@ def parse_env_file(text: str) -> dict[str, str]:
     return out
 
 
+def load_setting(name: str, env_path: Path | None = None,
+                 environ: "os._Environ[str] | dict[str, str] | None" = None) -> str:
+    """Read one setting from the environment, falling back to a .env file.
+
+    Returns "" when unset — callers decide whether that is fatal.
+    """
+    env: "os._Environ[str] | dict[str, str]" = os.environ if environ is None else environ
+    value = (env.get(name) or "").strip()
+    if value:
+        return value
+    if env_path and env_path.is_file():
+        return parse_env_file(env_path.read_text(encoding="utf-8")).get(name, "").strip()
+    return ""
+
+
 def load_api_key(env_path: Path | None = None,
                  environ: "os._Environ[str] | dict[str, str] | None" = None) -> str:
     """Resolve the API key from the environment, then from a .env file.
 
     Never accepted on the command line: argv is world-readable via /proc.
     """
-    env: "os._Environ[str] | dict[str, str]" = os.environ if environ is None else environ
-    key = (env.get("UPLOAD_POST_API_KEY") or "").strip()
+    key = load_setting("UPLOAD_POST_API_KEY", env_path, environ)
     if key:
         return key
-    if env_path and env_path.is_file():
-        key = parse_env_file(env_path.read_text(encoding="utf-8")).get(
-            "UPLOAD_POST_API_KEY", "").strip()
-        if key:
-            return key
     raise SystemExit(
         "missing UPLOAD_POST_API_KEY.\n"
         "  export UPLOAD_POST_API_KEY=... , or put it in clipper/.env\n"
         "  (get one at https://app.upload-post.com -> API Keys)"
+    )
+
+
+def load_user(env_path: Path | None = None,
+              environ: "os._Environ[str] | dict[str, str] | None" = None) -> str:
+    """Resolve the Upload-Post profile name. Unlike the key, --user may override.
+
+    Not a secret, so it is fine on the command line — but it never changes
+    between runs, so .env is the sane home for it.
+    """
+    user = load_setting("UPLOAD_POST_USER", env_path, environ)
+    if user:
+        return user
+    raise SystemExit(
+        "missing Upload-Post profile name.\n"
+        "  pass --user <profile>, export UPLOAD_POST_USER=... ,\n"
+        "  or put UPLOAD_POST_USER in clipper/.env\n"
+        "  (list your profiles with: clipper.py publish --check)"
     )
 
 

@@ -19,6 +19,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 import uploadpost as up  # noqa: E402
 from clipper import build_parser  # noqa: E402
 
+# Bound before the autouse fixture below stubs it out, so the credential tests
+# can exercise the real resolver while everything else gets the stub.
+REAL_LOAD_USER = up.load_user
+
 
 # --- fixtures ---------------------------------------------------------------
 @pytest.fixture
@@ -29,6 +33,19 @@ def job(tmp_path):
     for name in ("01-hook.mp4", "02-middle-bit.mp4", "03-payoff.mp4"):
         (clips_dir / name).write_bytes(b"\x00\x00\x00\x18ftypmp42fake")
     return tmp_path / "job-abc"
+
+
+@pytest.fixture(autouse=True)
+def isolate_credentials(monkeypatch):
+    """Keep tests off the real .env and the real environment.
+
+    Without this, cmd_publish would resolve UPLOAD_POST_USER from the
+    developer's own .env and the suite would pass or fail depending on whose
+    machine it runs on.
+    """
+    monkeypatch.delenv("UPLOAD_POST_API_KEY", raising=False)
+    monkeypatch.delenv("UPLOAD_POST_USER", raising=False)
+    monkeypatch.setattr(up, "load_user", lambda *a, **k: "test-profile")
 
 
 SPEC = [
@@ -62,6 +79,38 @@ def test_load_api_key_falls_back_to_env_file(tmp_path):
 def test_load_api_key_missing_raises(tmp_path):
     with pytest.raises(SystemExit):
         up.load_api_key(tmp_path / "nope.env", {})
+
+
+def test_load_user_prefers_environment(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("UPLOAD_POST_USER=from-file\n")
+    assert REAL_LOAD_USER(env_file, {"UPLOAD_POST_USER": "from-env"}) == "from-env"
+
+
+def test_load_user_falls_back_to_env_file(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("UPLOAD_POST_USER=mybrand\n")
+    assert REAL_LOAD_USER(env_file, {}) == "mybrand"
+
+
+def test_load_user_missing_raises(tmp_path):
+    with pytest.raises(SystemExit):
+        REAL_LOAD_USER(tmp_path / "nope.env", {})
+
+
+def test_load_setting_returns_empty_when_unset(tmp_path):
+    """Unlike the loaders, load_setting is not fatal — callers decide."""
+    assert up.load_setting("NOPE", tmp_path / "absent.env", {}) == ""
+
+
+def test_an_empty_value_in_env_counts_as_unset(tmp_path):
+    """A freshly scaffolded .env has `UPLOAD_POST_API_KEY=` — must not pass."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("UPLOAD_POST_API_KEY=\nUPLOAD_POST_USER=\n")
+    with pytest.raises(SystemExit):
+        up.load_api_key(env_file, {})
+    with pytest.raises(SystemExit):
+        REAL_LOAD_USER(env_file, {})
 
 
 def test_redact_never_leaks_the_middle():
@@ -359,9 +408,31 @@ def test_publish_accepts_repeated_platforms_and_yes():
     assert args.yes is True
 
 
-def test_publish_requires_a_user():
+def test_publish_user_is_optional_on_the_cli():
+    """It lives in .env; requiring it on every run was needless friction."""
+    args = build_parser().parse_args(
+        ["publish", "work/job", "--platform", "tiktok"])
+    assert args.user is None
+
+
+def test_publish_user_flag_still_overrides():
+    args = build_parser().parse_args(
+        ["publish", "work/job", "--user", "other", "--platform", "tiktok"])
+    assert args.user == "other"
+
+
+def test_publish_check_needs_no_job_dir():
+    args = build_parser().parse_args(["publish", "--check"])
+    assert args.check is True
+    assert args.job_dir is None
+
+
+def test_publish_without_a_job_dir_or_check_is_refused(job, monkeypatch):
+    from clipper import cmd_publish
+    monkeypatch.setattr(up, "load_user", lambda *a, **k: "me")
+    args = build_parser().parse_args(["publish", "--platform", "tiktok"])
     with pytest.raises(SystemExit):
-        build_parser().parse_args(["publish", "work/job", "--platform", "tiktok"])
+        cmd_publish(args)
 
 
 def test_publish_schedule_and_timezone_parse():
