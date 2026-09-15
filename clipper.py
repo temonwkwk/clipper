@@ -191,7 +191,7 @@ def load_captions(job_dir: Path) -> tuple[list[Segment], list[tuple[float, str]]
     """Find whatever caption file yt-dlp produced and parse it."""
     candidates: list[Path] = []
     for pattern in ("*.json3", "*.vtt", "*.srt", "*.srv3"):
-        candidates.extend(sorted(job_dir.glob(f"subs*{pattern}")))
+        candidates.extend(sorted(job_dir.glob(f"subs*{pattern[1:]}")))
         candidates.extend(sorted(job_dir.glob(pattern)))
     seen: set[Path] = set()
     for path in candidates:
@@ -217,8 +217,18 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     workdir = Path(args.workdir).expanduser()
     workdir.mkdir(parents=True, exist_ok=True)
 
-    probe = run([
-        "yt-dlp", "--no-warnings", "--skip-download",
+    # Keep authentication/challenge solving on every yt-dlp call, including
+    # metadata probe. Previously cookies were added only after this probe,
+    # making a valid cookie file appear ineffective.
+    common = ["yt-dlp", "--no-warnings", "--no-playlist",
+              "--remote-components", "ejs:github"]
+    if args.cookies:
+        common += ["--cookies", args.cookies]
+    elif args.cookies_from_browser:
+        common += ["--cookies-from-browser", args.cookies_from_browser]
+
+    probe = run(common + [
+        "--skip-download",
         "--print", "%(id)s\t%(title)s\t%(duration)s\t%(uploader)s",
         args.url,
     ])
@@ -238,8 +248,11 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         f"bv*[height<={height}][ext=mp4]+ba[ext=m4a]/"
         f"bv*[height<={height}]+ba/b[height<={height}]/b"
     )
-    common = ["yt-dlp", "--no-warnings", "--no-playlist"]
-    if args.cookies_from_browser:
+    common = ["yt-dlp", "--no-warnings", "--no-playlist",
+              "--remote-components", "ejs:github"]
+    if args.cookies:
+        common += ["--cookies", args.cookies]
+    elif args.cookies_from_browser:
         common += ["--cookies-from-browser", args.cookies_from_browser]
 
     # Captions first, in their own call. A caption failure (429, none offered)
@@ -999,6 +1012,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_fetch.add_argument("--workdir", default=str(DEFAULT_WORKDIR))
     p_fetch.add_argument("--max-height", type=int, default=720)
     p_fetch.add_argument("--lang", default="en")
+    p_fetch.add_argument("--cookies", default=None,
+                         help="Netscape cookies.txt file for YouTube login")
     p_fetch.add_argument("--cookies-from-browser", default=None)
     p_fetch.set_defaults(func=cmd_fetch)
 
